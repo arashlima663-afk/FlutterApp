@@ -33,34 +33,12 @@ def generate_key_pair():
 
 
 
-class Base(DeclarativeBase):
-    pass
-
-class Keys(Base):
-    __tablename__ = "ephemeral_keys"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    pv_key: Mapped[bytes] = mapped_column(LargeBinary(33))
-    pub_key: Mapped[bytes] = mapped_column(LargeBinary(33))
-    
-
-
-    def __repr__(self) -> str:
-        return f"Key (id={self.id}, pub_key={self.pub_key}, pv_key={self.pv_key})"
-
 
 
 
 
 @app.put("/")
 async def to_client(file: Annotated[bytes, File(description="A file read as bytes")]):
-    # engine = create_async_engine("sqlite+aiosqlite://keys.db", echo=True)
-
-    # pv, pub = generate_key_pair()
-
-    # async with async_sessionmaker(engine, expire_on_commit=True) as session:
-    #     key_entry = Keys(pub_key=pv, pv_key=pub)
-    #     async with session.begin():
-    #         session.add(key_entry)
 
     return 'to client'
 

@@ -12,6 +12,8 @@ dependencies:
   http: ^1.1.0
   image_picker: ^1.2.1
   cryptography: ^2.9.0
+  gallery_saver: ^2.3.2
+  image_gallery_saver: ^1.7.1
 
 dev_dependencies:
   flutter_test:

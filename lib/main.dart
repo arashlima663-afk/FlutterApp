@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -76,10 +75,11 @@ class _HomeState extends State<Home> {
         title: const Text('Flutter App', style: TextStyle(color: Colors.white)),
         centerTitle: true,
       ),
-      body: Center(
+      body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.only(top: 50),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               SizedBox(
                 width: 200,
@@ -119,12 +119,10 @@ class _HomeState extends State<Home> {
                 ),
               ),
               const SizedBox(height: 20),
-              _selectedImgae != null
-                  ? Image.file(_selectedImgae!)
-                  : Text('Select an Image'),
+              _selectedImgae == null
+                  ? Center(child: Text('Select an Image'))
+                  : Image.file(_selectedImgae!),
               const SizedBox(height: 100),
-
-              Text(_responseText ?? 'Null Input'),
             ],
           ),
         ),
