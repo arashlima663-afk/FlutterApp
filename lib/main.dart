@@ -1,12 +1,17 @@
 import 'dart:io';
+// import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:cryptography/cryptography.dart';
+import 'package:cryptography/dart.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:cryptography/cryptography.dart';
+import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -27,9 +32,19 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
+  // serverPublicKey
+  List<int>? serverPublicKey;
+  String? status1;
+  //
+  Uint8List? _imageAsBytes;
+  List<int>? secretImg;
+  List<int>? secretKeyBytes;
+  // final img = [..._imageAsBytes!, ...secretKeyBytes];
+
+  // late CameraController controller;
+  // late List<CameraDescription> cameras;
+  // Uint8List? capturedImage;
   File? _selectedImgae;
-  String? _responseText;
-  dynamic pkey;
 
   @override
   void initState() {
@@ -37,10 +52,10 @@ class _HomeState extends State<Home> {
     _postData();
   }
 
+  // init post req for pub key
   Future<void> _postData() async {
-    final url = Uri.parse('http://10.0.2.2:8000/');
-
-    final body = jsonEncode({'body': 'POST request from Flutter'});
+    final url = Uri.parse('http://10.0.2.2:8000');
+    final body = jsonEncode({'body': 'request for serverPublicKey'});
 
     try {
       final response = await http.post(
@@ -52,19 +67,54 @@ class _HomeState extends State<Home> {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final Uint8List serverPubBytes = base64Decode(data['public_key']);
+        final SimplePublicKey serverPublicKey = SimplePublicKey(
+          serverPubBytes,
+          type: KeyPairType.x25519,
+        );
         setState(() {
-          _responseText = response.body;
+          serverPublicKey;
         });
       } else {
         setState(() {
-          _responseText = 'Failed ${response.statusCode}\n${response.body}';
+          status1 = "Status: ${response.statusCode}\n\n${response.body}!!";
         });
       }
     } catch (e) {
       setState(() {
-        _responseText = 'Error: $e';
+        status1 = 'Error: $e !!';
       });
     }
+  }
+
+  // aes encrypt
+  Future<Map<String, Uint8List>> encryptWithX25519({
+    required List<int> imageBytes,
+    required SimplePublicKey serverPublicKey,
+  }) async {
+    final x25519 = X25519();
+    final clientKeyPair = await x25519.newKeyPair();
+    final clientPublicKey = await clientKeyPair.extractPublicKey();
+    final sharedSecretKey = await x25519.sharedSecretKey(
+      keyPair: clientKeyPair,
+      remotePublicKey: serverPublicKey,
+    );
+  }
+
+  //   setState(() {});
+  // }
+  /// HKDF key derivation
+  Future<List<int>> _hkdfSha256(SecretKey sharedSecret, int length) async {
+    final algorithm = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+    final secretKey = SecretKey([1, 2, 3]);
+    final nonce = [4, 5, 6];
+    final output = await algorithm.deriveKey(
+      secretKey: secretKey,
+      nonce: nonce,
+    );
+    final List<int> out = await output.extractBytes();
+    return out;
   }
 
   @override
@@ -77,53 +127,124 @@ class _HomeState extends State<Home> {
       ),
       body: SingleChildScrollView(
         child: Padding(
-          padding: const EdgeInsets.only(top: 50),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              SizedBox(
-                width: 200,
-                child: ElevatedButton(
-                  onPressed: _pickGallery,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    'Gallery',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: Colors.black,
+          padding: const EdgeInsets.only(top: 30),
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Column(
+              children: [
+                SizedBox(
+                  width: 200,
+                  child: ElevatedButton(
+                    onPressed: _pickGallery,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                    child: const Text(
+                      'Gallery',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.black,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: 200,
-                child: ElevatedButton(
-                  onPressed: _pickCamera,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    'Camera',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: Colors.black,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              _selectedImgae == null
-                  ? Center(child: Text('Select an Image'))
-                  : Image.file(_selectedImgae!),
-              const SizedBox(height: 100),
-            ],
+                SizedBox(width: 200, child: Text(status1)),
+                const SizedBox(height: 20),
+                _selectedImgae == null
+                    ? Align(
+                        alignment: Alignment.topCenter,
+                        child: Column(
+                          children: [
+                            SizedBox(
+                              width: 200,
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  await _pickCamera();
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.blue,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 15,
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Camera',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: Colors.black,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            Text('select the image'),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              SizedBox(
+                                width: 200,
+                                child: ElevatedButton(
+                                  onPressed: () async {
+                                    await _pickCamera();
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 15,
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Camera',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              SizedBox(
+                                width: 200,
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    // Logic for the new "UP" button
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    'Upload',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          Image.file(_selectedImgae!, fit: BoxFit.cover),
+
+                          SizedBox(height: 20),
+                        ],
+                      ),
+                const SizedBox(height: 100),
+              ],
+            ),
           ),
         ),
       ),
@@ -141,14 +262,44 @@ class _HomeState extends State<Home> {
     });
   }
 
+  // File? _selectedImage;
+
+  // Future<void> captureImageBytes() async {
+  //   cameras = await availableCameras();
+
+  //   controller = CameraController(
+  //     cameras.first,
+  //     ResolutionPreset.ultraHigh,
+  //     enableAudio: false,
+  //     imageFormatGroup: ImageFormatGroup.jpeg,
+  //   );
+
+  //   await controller.initialize();
+  //   await controller.setFocusMode(FocusMode.auto);
+
+  //   XFile imageFile = await controller.takePicture();
+  //   if (imageFile.path.isEmpty) return;
+
+  //   final bytes = await File(imageFile.path).readAsBytes();
+
+  //   setState(() {
+  //     capturedImage = bytes;
+  //     _selectedImgae = File(imageFile.path);
+  //   });
+  // }
+
   Future _pickCamera() async {
     final returnedImage = await ImagePicker().pickImage(
       source: ImageSource.camera,
+      imageQuality: 100,
     );
+
+    _imageAsBytes = await returnedImage?.readAsBytes();
 
     if (returnedImage == null) return;
     setState(() {
       _selectedImgae = File(returnedImage.path);
+      _imageAsBytes;
     });
   }
 }
