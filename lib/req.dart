@@ -1,85 +1,63 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 
+// The main function is the entry point of the application
 void main() {
-  runApp(const MyApp());
+  runApp(const Home());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class Home extends StatefulWidget {
+  const Home({super.key});
+
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+// String title
+class _HomeState extends State<Home> {
+  String? _data;
+
+  fetchdata() async {
+    var response = await http.get(
+      Uri.parse('http://localhost:5000/key'),
+      // body: jsonEncode(<String, String>{'title': title}),
+    );
+    setState(() {
+      _data = response.body;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter POST on App Start',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const MyHomePage(),
-    );
-  }
-}
+      // Title of the application
+      title: 'GeeksforGeeks',
+      // Theme of the application
+      theme: ThemeData(primarySwatch: Colors.green),
+      // Dark theme of the application
+      darkTheme: ThemeData(primarySwatch: Colors.grey),
+      // Color of the application
+      color: Colors.amberAccent,
+      // Supported locales for the application
+      supportedLocales: {const Locale('en', ' ')},
+      // Disable the debug banner
+      debugShowCheckedModeBanner: false,
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  String _responseText = "Sending POST request...";
-
-  @override
-  void initState() {
-    super.initState();
-    sendPostRequest();
-  }
-
-  Future<void> sendPostRequest() async {
-    final url = Uri.parse(
-      'https://jsonplaceholder.typicode.com/posts',
-    ); // Replace with your API endpoint
-
-    final body = jsonEncode({
-      'title': 'Hello Flutter',
-      'body': 'This is a POST request sent on app start',
-      'userId': 1,
-    });
-
-    try {
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        print('POST successful: ${response.body}');
-        setState(() {
-          _responseText = 'POST Successful!\nResponse:\n${response.body}';
-        });
-      } else {
-        print('Failed POST: ${response.statusCode} ${response.body}');
-        setState(() {
-          _responseText = 'POST Failed: ${response.statusCode}';
-        });
-      }
-    } catch (e) {
-      print('Error: $e');
-      setState(() {
-        _responseText = 'Error: $e';
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('POST on App Start')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Text(_responseText, style: const TextStyle(fontSize: 16)),
+      // Home screen of the application
+      home: Scaffold(
+        appBar: AppBar(
+          // Title of the app bar
+          title: const Text('GeeksforGeeks'),
+          // Background color of the app bar
+          backgroundColor: Colors.green,
+        ),
+        body: Column(
+          children: [
+            ElevatedButton(onPressed: fetchdata, child: Text('f')),
+            ElevatedButton(onPressed: () {}, child: Text('c')),
+            ElevatedButton(onPressed: () {}, child: Text('d')),
+            Expanded(child: Text(_data ?? 'Loading...')),
+          ],
         ),
       ),
     );

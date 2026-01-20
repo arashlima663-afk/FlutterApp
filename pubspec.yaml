@@ -9,11 +9,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.1.0
+  http: 0.13.6
   image_picker: ^1.2.1
   cryptography: ^2.9.0
-  gallery_saver: ^2.3.2
-  image_gallery_saver: ^1.7.1
+
+  camera: ^0.11.3
 
 dev_dependencies:
   flutter_test:
