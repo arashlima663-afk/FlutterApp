@@ -1,28 +1,33 @@
 import datetime as _dt
-
 import pydantic as _pydantic
     
 
 class PublicKeyRequest_Base(_pydantic.BaseModel):
-    title: str| None
-    # data_created: str
+    title: str
+    owner_id : str
+    date_created: int = None
 
-    class Config:
-        orm_mode = True
+    model_config = _pydantic.ConfigDict(from_attributes=True)
 
 
 class PublicKeyResponse(PublicKeyRequest_Base):
-    public_key: str| None
-    expires_in: str| None
-    hashed_token: str| None
+    pub_key: str
+    exp: int | None
+    jwt: str
 
-    class Config:
-        orm_mode = True
-
+    model_config = _pydantic.ConfigDict(from_attributes=True)
 
 class DataResponse(_pydantic.BaseModel):
-    image: bytes| None
-    in_token: str| None
+    owner_id : str | None = None
+    encrypted_aes: str
+    img: bytes | None
+    jwt: str
+    
 
-    class Config:
-        orm_mode = True
+    model_config = _pydantic.ConfigDict(from_attributes=True)
+
+
+
+if __name__ == "__main__":
+    m = PublicKeyResponse(public_key="abcd", expires_in= 1234, jwt="effe")
+    m.public_key
