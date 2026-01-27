@@ -1,196 +1,188 @@
-import db as _database
 import models as _models
 import sqlalchemy.orm as _orm
-import random,string
-import asyncio, os, dotenv, pathlib 
+import sqlalchemy as _sql
 import datetime as _dt
-import jwt, base64, time
-from secrets import choice   
-from string import printable
+import jwt, base64, time, random
 import schemas as _schemas
-from sqlalchemy import ForeignKey, func, select
-from sqlalchemy.ext.asyncio import (
-    AsyncAttrs,
-    create_async_engine,
-    AsyncSession,
-    async_sessionmaker,
-)
-from sqlalchemy.orm import (
-    DeclarativeBase,
-    Mapped,
-    mapped_column,
-    relationship,
-    selectinload,
-)
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import load_pem_public_key, load_pem_private_key
+from models import engine
 
 
-dotenv.load_dotenv(override=True)
+def create_get_db():
+    if not (_sql.inspect(_models.engine).has_table("x25519") and _sql.inspect(_models.engine).has_table("users")):
+        _models.Base.metadata.drop_all(_models.engine)
+        _models.Base.metadata.create_all(_models.engine)
 
-class one_pad_encrypt:
-    def __init__(self, message:str):
-        self.message = message
-        self.pad=""
-        self.ciphertext = ""
-        self.plaintext = ""
-        self.pad = ''.join(choice(string.printable) for _ in range(len(self.message)))
-
-    def encrypt(self) -> str:
-        self.ciphertext = ''.join(chr(ord(m) ^ ord(p)) for m, p in zip(self.message, self.pad))
-        return self.ciphertext
-
-    def decrypt(self) -> str:
-        decrypted = ''.join(chr(ord(c) ^ ord(p)) for c, p in zip(self.ciphertext, self.pad))
-        return decrypted
-
-
-
-async def create_db():
-    async with _database.engine.begin() as conn:
-        await conn.run_sync(_models.Base.metadata.create_all)
-    await _database.engine.dispose()
-
-
-
-async def get_async_db() -> AsyncSession:
-    async with _database.async_session() as db:
+    db = _models.SessionLocal()
+    try:
         yield db
+    finally:
+        db.close()
 
 
-async def create_user(user: _schemas.PublicKeyRequest_Base, db: AsyncSession):
-     user_obj = _models.Keys(pv_key=private_key, pub_key=public_key, owner_id_onepadded=owner_id, )
-     db.add(user_obj)
-     db.commit(user_obj)
-     db.refresh(user_obj)
 
-
-async def get_user_by_owner_id(owner_id:str , db: AsyncSession):
-    result = await db.execute(select(_models.Keys).where(_models.Keys.owner_id == owner_id))
+async def get_user_by_owner_id(owner_id: str , db: _orm.Session):
+    query = _sql.select(_models.User).where( _sql.func.substr(_models.User.owner_id, 1, _sql.func.instr(_models.User.owner_id, "@") - 1 ) == owner_id)
+    result = db.execute(query)
     if result:
         return result.first()
     else:
-        return None
+        return False
+
+
+
+def get_newest_KeyRows(db: _orm.Session):
+    x25519_stmt = (_sql.select(_models.X25519_Key).order_by(_models.X25519_Key.x25519_created_at.desc()).limit(1))
+    ed25519_stmt = (_sql.select(_models.Ed25519_Key).order_by(_models.Ed25519_Key.ed25519_created_at.desc()).limit(1))
+    x25519_result = db.execute(x25519_stmt).scalar_one_or_none()
+    ed25519_result = db.execute(ed25519_stmt).scalar_one_or_none()
+    return (x25519_result, ed25519_result)
+
 
 
 class key_generating:
-    __slots__ = ('pv_bytes', 'pub_bytes', 'pv_str', 'pub_str', 'aes_key','private_key_Ed25519','public_key_Ed25519')
+    __slots__ = ('pv_bytes', 'pub_bytes','private_key_Ed25519','public_key_Ed25519')
 
     def __init__(self):
+
         private_key = x25519.X25519PrivateKey.generate()
         public_key = private_key.public_key()
 
         # Store keys as Base64 strings for easy transport / JSON
         self.pv_bytes = private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
                 encryption_algorithm=serialization.NoEncryption())
 
         self.pub_bytes = public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo)
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw)
 
     def key_pair_bytes(self) -> tuple[bytes, bytes]:
         return self.pv_bytes, self.pub_bytes
 
-    def key_pair_str(self) -> tuple[str, str]:
-        self.pv_str=str(self.pv_bytes.decode().splitlines()[1])
-        self.pub_str = str(self.pub_bytes.decode().splitlines()[1])
-        return self.pv_str, self.pub_str
+    # def key_pair_str(self) -> tuple[str, str]:
+    #     self.pv_str=str(self.pv_bytes.decode().splitlines()[1])
+    #     self.pub_str = str(self.pub_bytes.decode().splitlines()[1])
+    #     return self.pv_str, self.pub_str
+   
 
-    def generate_aes_key(self, remote_public_key_b64: str) -> bytes:
-        remote_pub_bytes = base64.b64encode(remote_public_key_b64)
-        remote_public_key = x25519.X25519PublicKey.from_public_bytes(remote_pub_bytes)
+    def generate_Ed25519(self):
 
-        shared_secret = self.pv_bytes.exchange(remote_public_key)
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key()
 
-        self.aes_key = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b"handshake data",
-        ).derive(shared_secret)
+        self.private_key_Ed25519 = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption())
+        
+        self.public_key_Ed25519 = public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo)
 
-        return self.aes_key
-    
-
-    
-    
-
-def generate_Ed25519(env_path=".env"):
-    dotenv.load_dotenv(env_path)
-
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key()
-
-    private_key_Ed25519 = private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        )
-    dotenv.set_key(env_path, "SERVER_PV_Ed25519", private_key_Ed25519, quote_mode='never')
-    
-    public_key_Ed25519 = public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
-    dotenv.set_key(env_path, "SERVER_PUB_Ed25519", public_key_Ed25519, quote_mode='never')
-
-    return private_key_Ed25519, public_key_Ed25519
-
-# TODO dotenv
-def generate_token(user: _schemas.PublicKeyRequest_Base, private_key: bytes, expire:int) -> str:
-    user_schema_obj = _schemas.PublicKeyRequest_Base.model_validate(user)
-    user_dict = user_schema_obj.model_dump()
-    user_dict.update({'exp': expire})
-
-    pv = load_pem_private_key(private_key, password=None)
-
-    encoded_jwt = jwt.encode(user_dict, pv, algorithm="EdDSA")
-    return encoded_jwt
+        return self.private_key_Ed25519, self.public_key_Ed25519
 
 
-def key_pairs(env_path=".env"):
-    file_path = pathlib.Path.cwd().absolute()/"old_keys.txt"
-    # while True:
-    init = key_generating()
-    SERVER_PV_KEY, SERVER_PUB_KEY = init.key_pair_str()
-    SERVER_PV_Ed25519, SERVER_PUB_Ed25519 = init.generate_Ed25519()
 
-    with file_path.open("a", encoding="utf-8") as f:
-        f.write(f"SERVER_PUB_KEY:{SERVER_PUB_KEY}\t SERVER_PV_KEY:{SERVER_PV_KEY}\t SERVER_PUB_Ed25519:{SERVER_PUB_Ed25519}\t SERVER_PV_Ed25519:{SERVER_PV_Ed25519}\n")
+def sharedSecret_AES(clientPublicKeyBase64: str, server_private_bytes: bytes):
+    # Load server private key from raw 32 bytes
+    server_private_key = x25519.X25519PrivateKey.from_private_bytes(server_private_bytes)
 
-    dotenv.set_key(".env", "SERVER_PV_KEY", SERVER_PV_KEY)
-    dotenv.set_key(".env", "SERVER_PUB_KEY", SERVER_PUB_KEY)
-    dotenv.set_key(".env", "SERVER_PV_Ed25519", SERVER_PV_Ed25519, quote_mode='never')
-    dotenv.set_key(".env", "SERVER_PUB_Ed25519", SERVER_PUB_Ed25519, quote_mode='never')
-    # time.sleep(15*60)
+    # Load client public key from Base64
+    client_pub_bytes = base64.b64decode(clientPublicKeyBase64)
+    client_public_key = x25519.X25519PublicKey.from_public_bytes(client_pub_bytes)
 
-    return SERVER_PV_Ed25519, SERVER_PUB_Ed25519
-    
+    # Compute shared secret
+    shared_secret = server_private_key.exchange(client_public_key)
+
+    # Derive AES key from shared secret
+    aes_key_bytes = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"handshake shared_secret aes key",
+    ).derive(shared_secret)
+
+    return aes_key_bytes
 
 
-def verify_token(jwt_token: str, secret: bytes) -> dict:
+
+def decrypt_aes(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) -> bytes:
+    aesgcm = AESGCM(key)
+    data = aesgcm.decrypt(nonce, ciphertext, tag)
+
+    return data
+
+
+
+def generate_token_payload(payload: dict, private_key) -> str:
+
+    payload = jwt.encode(payload, private_key, algorithm="EdDSA")
+    return payload
+
+
+def verify_token(jwt_token: str, public_key) -> dict:
     try:
-        payload = jwt.decode(jwt_token, load_pem_public_key(bytes(secret)), algorithms=["EdDSA"])
+        payload = jwt.decode(jwt_token, public_key, algorithms=["EdDSA"])
         return payload
     except jwt.exceptions.ExpiredSignatureError:
         print("Token expired")
 
 
-if __name__ == "__main__":
-    req = _schemas.PublicKeyRequest_Base(
-    title="My Public Key",
-    owner_id="user_123")
 
 
-    # pub_key_str = os.getenv("SERVER_PUB_Ed25519").replace("'", '"""')
-    # priv_key_str = os.getenv("SERVER_PV_Ed25519")
-    
+def generating_ed_keys():
 
-    
-    
-    
+    while True:
+        db: _orm.Session = _models.SessionLocal()
+        try:
+            a = key_generating()
+            server_pv, server_pub = a.key_pair_bytes()
+            new_keys = _models.X25519_Key(pv_key=server_pv, pub_key=server_pub)
+
+            db.add(new_keys)
+            db.commit()
+            db.refresh(new_keys)
+
+        except Exception as e:
+            db.rollback()
+            print("Key generation error:", e)
+
+        finally:
+            db.close()
+
+        time.sleep(random.randint(30*60,40*60))
+
+
+def generating_x_keys():
+
+    while True:
+        db: _orm.Session = _models.SessionLocal()
+        try:
+            b = key_generating()
+            ed25519_pv, ed25519_pub = b.generate_Ed25519()
+            new_keys = _models.Ed25519_Key(pv_key_Ed25519=ed25519_pv, pub_key_Ed25519=ed25519_pub)
+
+            db.add(new_keys)
+            db.commit()
+            db.refresh(new_keys)
+
+        except Exception as e:
+            db.rollback()
+            print("Key generation error:", e)
+
+        finally:
+            db.close()
+
+        time.sleep(random.randint(20*60,30*60))
+
+
+
+# if __name__ == "__main__":

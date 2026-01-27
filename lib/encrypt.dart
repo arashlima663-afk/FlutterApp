@@ -1,16 +1,20 @@
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
+import 'dart:math';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+import 'dart:io';
 
-Future<Map<String, String>> encryptForServer({
+Future<Map<String, dynamic>> encryptForServer({
   required List<int> message,
   required String serverPubKeyString,
+  required SimpleKeyPair clientKeyPair,
 }) async {
   final aes = AesGcm.with256bits();
   final x25519 = X25519();
   final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 
   // 1️⃣ Generate client ephemeral key pair
-  final clientKeyPair = await x25519.newKeyPair();
   final clientPublicKey = await clientKeyPair.extractPublicKey();
 
   // 2️⃣ Decode server public key
@@ -40,4 +44,41 @@ Future<Map<String, String>> encryptForServer({
     "ciphertext": base64Encode(secretBox.cipherText),
     "tag": base64Encode(secretBox.mac.bytes),
   };
+}
+
+String generateRandomString(int length) {
+  const String chars =
+      '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#\$%&\'()*+,-./:;<=>?[\\]^_`{|}~ ';
+  Random random = Random();
+
+  return String.fromCharCodes(
+    Iterable.generate(
+      length,
+      (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+    ),
+  );
+}
+
+Future<void> upload(Uint8List value) async {
+  var request = http.MultipartRequest(
+    'POST',
+    Uri.parse('http://localhost:5000/data'),
+  );
+
+  request.fields['title'] = 'title';
+
+  request.files.add(
+    http.MultipartFile.fromBytes(
+      'img', // must match FastAPI parameter
+      value, // raw bytes
+      filename: 'data.bin',
+    ),
+  );
+
+  var response = await request.send();
+
+  final resBytes = await response.stream.toBytes();
+  final result = utf8.decode(resBytes);
+
+  print(result);
 }

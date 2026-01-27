@@ -1,71 +1,67 @@
 import datetime as _dt
-import random,string
 import sqlalchemy as _sql
 import sqlalchemy.orm as _orm
-import passlib.hash as _hash
-from passlib.context import CryptContext
-import jwt
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncAttrs
+import sqlalchemy.orm as _orm
+
+engine = _sql.create_engine("sqlite:///database.db", connect_args={"check_same_thread": False}, pool_pre_ping=True,pool_size=10,max_overflow=20,)
+SessionLocal = _orm.sessionmaker(autocommit=False, bind=engine)
 
 
-import db as _database
 
-class Base(AsyncAttrs, DeclarativeBase):
+
+class Base(DeclarativeBase):
     pass
 
 
-class Keys(Base):
-    __tablename__ = "keys"
-    id = _sql.Column(_sql.Integer, primary_key=True, index = True)
-    pv_key = _sql.Column(_sql.String, unique=True, index = True)
-    pub_key = _sql.Column(_sql.String, unique=True, index = True)
-    owner_id = _sql.Column(_sql.Integer, unique=True, index = True)
+class X25519_Key(Base):
+    __tablename__ = "x25519"
+
+    id = _sql.Column(_sql.Integer, primary_key=True, index=True)
+
+    pv_key = _sql.Column(_sql.LargeBinary, unique=True)
+    pub_key = _sql.Column(_sql.LargeBinary, unique=True)
+
+    x25519_created_at = _sql.Column(_sql.Integer, default=int(_dt.datetime.now().timestamp()))
+
+    users = _orm.relationship("User", back_populates="key_x", cascade="all, delete-orphan")
+
+
+class Ed25519_Key(Base):
+    __tablename__ = "ed25519"
+
+    id = _sql.Column(_sql.Integer, primary_key=True, index=True)
+
+    pv_key_Ed25519 = _sql.Column(_sql.LargeBinary, unique=True, nullable=False)
+    pub_key_Ed25519 = _sql.Column(_sql.LargeBinary, unique=True, nullable=False)
+
+    ed25519_created_at = _sql.Column(_sql.Integer, default=int(_dt.datetime.now().timestamp()))
+
+    users = _orm.relationship("User", back_populates="key_ed", cascade="all, delete-orphan")
+
+
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = _sql.Column(_sql.Integer, primary_key=True, index = True, unique=True)
+    owner_id = _sql.Column( _sql.String, index=True )
+
     jwt = _sql.Column(_sql.String, unique=True, index = True)
-    in_token = _sql.Column(_sql.String, unique=True, index = True)
-    data_created = _sql.Column(_sql.Integer)
+    data_created = _sql.Column(_sql.Integer, default=int(_dt.datetime.now().timestamp()))
     exp = _sql.Column(_sql.Integer)
-    image = _sql.Column(_sql.LargeBinary)
+    image = _sql.Column(_sql.LargeBinary, nullable=True)
+    clientPublicKeyBase64 = _sql.Column(_sql.String, nullable=True)
+    sharedSecret_AES = _sql.Column(_sql.LargeBinary, nullable=True)
+
+    x25519_key_id = _sql.Column(_sql.Integer,_sql.ForeignKey("x25519.id"))
+    ed25519_key_id = _sql.Column(_sql.Integer,_sql.ForeignKey("ed25519.id"))
+
+    key_ed = _orm.relationship("Ed25519_Key", back_populates="users")
+    key_x = _orm.relationship("X25519_Key", back_populates="users")
 
 
-# class Users(Base):
-#     __tablename__ = "user"
-#     id = _sql.Column(_sql.Integer, primary_key=True, index = True)
-#     owner_id = _sql.Column(_sql.Integer, unique=True, index = True)
-#     jwt = _sql.Column(_sql.String, unique=True, index = True)
-#     data_created = _sql.Column(_sql.Integer)
-#     exp = _sql.Column(_sql.Integer)
-#     image = _sql.Column(_sql.LargeBinary)
-
-#     keys = _orm.relationship("Keys", back_populates="user")
-
-
-# class Keys(Base):
-#     __tablename__ = "keys"
-
-#     id = _sql.Column(_sql.Integer, primary_key=True, index=True)
-
-#     owner_id = _sql.Column(
-#         _sql.Integer,
-#         unique=True,
-#         index=True,
-#         nullable=False
-#     )
-
-#     pv_key = _sql.Column(_sql.String, unique=True, index=True)
-#     pub_key = _sql.Column(_sql.String, unique=True, index=True)
-
-#     pv_key_Ed25519 = _sql.Column(_sql.String, unique=True, index=True)
-#     pub_key_Ed25519 = _sql.Column(_sql.String, unique=True, index=True)
-
-#     created_at = _sql.Column(
-#         _sql.Integer,
-#         default=lambda: int(_dt.datetime.now().timestamp())
-#     )
-
-#     user = _orm.relationship(
-#         "Users",
-#         back_populates="keys"
-#     )
+# if __name__ == "__main__":
 
 

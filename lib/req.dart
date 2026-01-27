@@ -1,63 +1,89 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-// The main function is the entry point of the application
-void main() {
-  runApp(const Home());
+Future<Res> fetchAlbum() async {
+  final response = await http.post(
+    Uri.parse('http://localhost:5000/key'),
+    headers: <String, String>{
+      'Content-Type': 'application/json; charset=UTF-8',
+    },
+    body: jsonEncode(<String, String>{'owner_id': 'testuser12'}),
+  );
+
+  if (response.statusCode == 200) {
+    // If the server did return a 200 OK response,
+    // then parse the JSON.
+    return Res.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  } else {
+    // If the server did not return a 200 OK response,
+    // then throw an exception.
+    throw Exception('Failed to load Servre Response');
+  }
 }
 
-class Home extends StatefulWidget {
-  const Home({super.key});
+class Res {
+  final String pubKey;
+  final int exp;
+  final String jwt;
+
+  const Res({required this.pubKey, required this.exp, required this.jwt});
+
+  factory Res.fromJson(Map<String, dynamic> json) {
+    return switch (json) {
+      {'pub_key': String pubKey, 'exp': int exp, 'jwt': String jwt} => Res(
+        pubKey: pubKey,
+        exp: exp,
+        jwt: jwt,
+      ),
+      _ => throw const FormatException('Failed to load Server Response.'),
+    };
+  }
+}
+
+void main() => runApp(const MyApp());
+
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
 
   @override
-  State<Home> createState() => _HomeState();
+  State<MyApp> createState() => _MyAppState();
 }
 
-// String title
-class _HomeState extends State<Home> {
-  String? _data;
+class _MyAppState extends State<MyApp> {
+  late Future<Res> futureAlbum;
 
-  fetchdata() async {
-    var response = await http.get(
-      Uri.parse('http://localhost:5000/key'),
-      // body: jsonEncode(<String, String>{'title': title}),
-    );
-    setState(() {
-      _data = response.body;
-    });
+  @override
+  void initState() {
+    super.initState();
+    futureAlbum = fetchAlbum();
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      // Title of the application
-      title: 'GeeksforGeeks',
-      // Theme of the application
-      theme: ThemeData(primarySwatch: Colors.green),
-      // Dark theme of the application
-      darkTheme: ThemeData(primarySwatch: Colors.grey),
-      // Color of the application
-      color: Colors.amberAccent,
-      // Supported locales for the application
-      supportedLocales: {const Locale('en', ' ')},
-      // Disable the debug banner
-      debugShowCheckedModeBanner: false,
-
-      // Home screen of the application
+      title: 'Fetch Data Example',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      ),
       home: Scaffold(
-        appBar: AppBar(
-          // Title of the app bar
-          title: const Text('GeeksforGeeks'),
-          // Background color of the app bar
-          backgroundColor: Colors.green,
-        ),
-        body: Column(
-          children: [
-            ElevatedButton(onPressed: fetchdata, child: Text('f')),
-            ElevatedButton(onPressed: () {}, child: Text('c')),
-            ElevatedButton(onPressed: () {}, child: Text('d')),
-            Expanded(child: Text(_data ?? 'Loading...')),
-          ],
+        appBar: AppBar(title: const Text('Fetch Data Example')),
+        body: Center(
+          child: FutureBuilder<Res>(
+            future: futureAlbum,
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                return Text(snapshot.data!.exp.toString());
+              } else if (snapshot.hasError) {
+                return Text('${snapshot.error}');
+              }
+
+              // By default, show a loading spinner.
+              return const CircularProgressIndicator();
+            },
+          ),
         ),
       ),
     );

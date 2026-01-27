@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
@@ -8,9 +9,63 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_application_1/encrypt.dart';
+import 'package:path/path.dart';
+import 'package:async/async.dart';
 
-// late List<CameraDescription> cameras;
-// late CameraController _controller;
+late SimpleKeyPair clientKeyPair;
+late String clientPublicKeyBase64;
+bool uploaded = false;
+String randomString = generateRandomString(7);
+Uint8List? imageAsBytes;
+
+String? owner_id;
+String? pubKey;
+String? jwt;
+
+Future<Res> fetchKey(String randomString) async {
+  final x25519 = X25519();
+
+  clientKeyPair = await x25519.newKeyPair();
+  final clientPublicKey = await clientKeyPair.extractPublicKey();
+  clientPublicKeyBase64 = base64.encode(clientPublicKey.bytes);
+
+  final response = await http.post(
+    Uri.parse('http://localhost:5000/key'),
+    headers: <String, String>{
+      'Content-Type': 'application/json; charset=UTF-8',
+    },
+    body: jsonEncode(<String, String>{
+      'owner_id': randomString,
+      'clientPublicKeyBase64': clientPublicKeyBase64,
+    }),
+  );
+
+  if (response.statusCode == 200) {
+    return Res.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  } else {
+    throw Exception('Failed to load Server Response');
+  }
+}
+
+class Res {
+  final String ownerId;
+  final dynamic pubKey;
+  final String jwt;
+
+  const Res({required this.ownerId, required this.pubKey, required this.jwt});
+
+  factory Res.fromJson(Map<String, dynamic> json) {
+    return switch (json) {
+      {
+        'owner_id': String ownerId,
+        'pub_key': dynamic pubKey,
+        'jwt': String jwt,
+      } =>
+        Res(ownerId: ownerId, pubKey: pubKey, jwt: jwt),
+      _ => throw const FormatException('Failed to load Server Response.'),
+    };
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,25 +79,22 @@ class CameraPage extends StatefulWidget {
   State<CameraPage> createState() => _CameraPageState();
 }
 
-class _CameraPageState extends State<CameraPage> {
+class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    // This function runs once after the widget is created
-    // runAfterAppOpens('init');
-  }
+    WidgetsBinding.instance.addObserver(this);
 
-  Future<ServerKeyResponse> runAfterAppOpens(String title) async {
-    var response = await http.post(
-      Uri.parse('http://localhost:5000/key'),
-      body: jsonEncode(<String, String>{'title': title}),
-    );
-    final serverKeyRes = ServerKeyResponse.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
-    // Store secretKey, nonce, and response in state
-    setState(() {});
-    return serverKeyRes;
+    // Run immediately on app start
+    final String randomnumber = generateRandomString(7);
+    // fetchKey(randomnumber).then((Res res) {
+    //   pubKey = res.pubKey;
+    //   owner_id = res.ownerId;
+    //   jwt = res.jwt;
+    // });
+
+    // Then run every 5 minutes
+    // _fetchAndSchedule();
   }
 
   // VARIABLES
@@ -52,7 +104,11 @@ class _CameraPageState extends State<CameraPage> {
   bool _showCamera = false;
   int? _statusCode;
 
-  ServerKeyResponse? _serverKeyRes;
+  Future<Res>? _futureKey;
+  String? clientPublicKeyBase64;
+  SimpleKeyPair? clientKeyPair;
+
+  // req to server
 
   // Take from Camera
   Future<void> _openCamera() async {
@@ -61,6 +117,7 @@ class _CameraPageState extends State<CameraPage> {
       _capturedImage = null;
       _webImage = null;
       _showCamera = true;
+      uploaded = false;
 
       final List<CameraDescription> cameras = await availableCameras();
       final CameraDescription backCamera = cameras.firstWhere(
@@ -88,10 +145,12 @@ class _CameraPageState extends State<CameraPage> {
   Future<void> _takePicture() async {
     final dynamic image = await _controller!.takePicture();
 
+    if (image == null) return;
+    imageAsBytes = await image.readAsBytes();
+
     if (kIsWeb) {
-      final bytes = await image.readAsBytes();
       setState(() {
-        _webImage = bytes;
+        _webImage = imageAsBytes;
         _showCamera = false;
       });
     } else {
@@ -107,8 +166,9 @@ class _CameraPageState extends State<CameraPage> {
     _controller = null;
     _capturedImage = null;
     _webImage = null;
+    uploaded = false;
 
-    final dynamic image = await ImagePicker().pickImage(
+    final XFile? image = await ImagePicker().pickImage(
       source: ImageSource.gallery,
       imageQuality: null,
       requestFullMetadata: false,
@@ -116,10 +176,11 @@ class _CameraPageState extends State<CameraPage> {
 
     if (image == null) return;
 
+    imageAsBytes = await image.readAsBytes();
+
     if (kIsWeb) {
-      final bytes = await image.readAsBytes();
       setState(() {
-        _webImage = bytes;
+        _webImage = imageAsBytes;
         _showCamera = false;
       });
     } else {
@@ -132,6 +193,7 @@ class _CameraPageState extends State<CameraPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller!.dispose();
     super.dispose();
   }
@@ -140,6 +202,19 @@ class _CameraPageState extends State<CameraPage> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.brown,
+          brightness: Brightness.light,
+        ),
+      ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.brown,
+          brightness: Brightness.dark,
+        ),
+      ),
+      themeMode: ThemeMode.system,
       home: Scaffold(
         appBar: AppBar(
           backgroundColor: const Color.fromARGB(255, 0, 0, 0),
@@ -157,30 +232,19 @@ class _CameraPageState extends State<CameraPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    ElevatedButton(
-                      onPressed: () async {
-                        final _serverKeyRes = await runAfterAppOpens("MyTitle");
+                    FutureBuilder<Res>(
+                      future: _futureKey, // ✅ use stored Future
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const CircularProgressIndicator();
+                        } else if (snapshot.hasError) {
+                          return Text('Error: ${snapshot.error}');
+                        } else if (snapshot.hasData) {
+                          return Text('pubKey: ${snapshot.data!.pubKey}');
+                        }
+                        return const Text('No data');
                       },
-                      child: const Text("Fetch Key"),
-                    ),
-                    Expanded(
-                      child: _serverKeyRes != null
-                          ? SingleChildScrollView(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text("Pub Key:\n${_serverKeyRes!.pubKey}"),
-
-                                  if (_serverKeyRes!.expiresIn != null)
-                                    Text(
-                                      "Expires In: ${_serverKeyRes!.expiresIn!.toIso8601String()}",
-                                    ),
-                                  if (_serverKeyRes!.extra != null)
-                                    Text("Extra: ${_serverKeyRes!.extra}"),
-                                ],
-                              ),
-                            )
-                          : const Text('Server response is null'),
                     ),
 
                     /// GALLERY BUTTON
@@ -218,12 +282,12 @@ class _CameraPageState extends State<CameraPage> {
                     if (_capturedImage != null || _webImage != null)
                       ElevatedButton(
                         onPressed: () {
-                          {}
+                          upload(imageAsBytes!);
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                         ),
-                        child: _statusCode == 200
+                        child: uploaded == true
                             ? const Text(
                                 "Done!",
                                 style: TextStyle(
@@ -290,53 +354,4 @@ class _CameraPageState extends State<CameraPage> {
       ),
     );
   }
-
-  //   Future<Post> _upload(String imageFile) async {
-  //     try {
-  //       _controller?.dispose();
-  //       super.dispose();
-  //       var req = http.MultipartRequest(
-  //         "POST",
-  //         Uri.parse('http://10.0.2.2:5000'),
-  //       );
-  //       req.files.add(await http.MultipartFile.fromPath('image', imageFile.path),contentType: MediaType('image', 'jpeg'));
-  //       response = await req.send();
-
-  //       setState(() {
-  //         // _responseData = response.body;
-  //         _statusCode = response.statusCode;
-  //       });
-  //     } catch (e) {
-  //       return;
-  //     }
-  //   }
-  // }
-}
-
-class ServerKeyResponse {
-  final String pubKey;
-  final String jwt;
-  final DateTime? expiresIn; // optional
-  final dynamic extra; // any other data
-
-  const ServerKeyResponse({
-    required this.pubKey,
-    required this.jwt,
-    this.expiresIn,
-    this.extra,
-  });
-
-  factory ServerKeyResponse.fromJson(Map<String, dynamic> json) {
-    final pubKey = json['pub_key'] ?? '';
-    final jwt = json['jwt'] ?? '';
-
-    return ServerKeyResponse(pubKey: pubKey, jwt: jwt);
-  }
-
-  // Map<String, dynamic> toJson() => {
-  //   'pub_key': pubKey,
-  //   'jwt': jwt,
-  //   if (expiresIn != null) 'expires_in': expiresIn!.toIso8601String(),
-  //   if (extra != null) 'extra': extra,
-  // };
 }
