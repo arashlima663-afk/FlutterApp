@@ -9,25 +9,18 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_application_1/encrypt.dart';
+import 'package:flutter_application_1/Picture.dart';
+import 'package:flutter_application_1/flags.dart';
+
 import 'package:path/path.dart';
 import 'package:async/async.dart';
-
-late SimpleKeyPair clientKeyPair;
-late String clientPublicKeyBase64;
-bool uploaded = false;
-String randomString = generateRandomString(7);
-Uint8List? imageAsBytes;
-
-String? owner_id;
-String? pubKey;
-String? jwt;
 
 Future<Res> fetchKey(String randomString) async {
   final x25519 = X25519();
 
-  clientKeyPair = await x25519.newKeyPair();
-  final clientPublicKey = await clientKeyPair.extractPublicKey();
-  clientPublicKeyBase64 = base64.encode(clientPublicKey.bytes);
+  Variables.clientKeyPair = await x25519.newKeyPair();
+  final clientPublicKey = await Variables.clientKeyPair.extractPublicKey();
+  Variables.clientPublicKeyBase64 = base64.encode(clientPublicKey.bytes);
 
   final response = await http.post(
     Uri.parse('http://localhost:5000/key'),
@@ -36,7 +29,7 @@ Future<Res> fetchKey(String randomString) async {
     },
     body: jsonEncode(<String, String>{
       'owner_id': randomString,
-      'clientPublicKeyBase64': clientPublicKeyBase64,
+      'clientPublicKeyBase64': Variables.clientPublicKeyBase64,
     }),
   );
 
@@ -44,26 +37,6 @@ Future<Res> fetchKey(String randomString) async {
     return Res.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   } else {
     throw Exception('Failed to load Server Response');
-  }
-}
-
-class Res {
-  final String ownerId;
-  final dynamic pubKey;
-  final String jwt;
-
-  const Res({required this.ownerId, required this.pubKey, required this.jwt});
-
-  factory Res.fromJson(Map<String, dynamic> json) {
-    return switch (json) {
-      {
-        'owner_id': String ownerId,
-        'pub_key': dynamic pubKey,
-        'jwt': String jwt,
-      } =>
-        Res(ownerId: ownerId, pubKey: pubKey, jwt: jwt),
-      _ => throw const FormatException('Failed to load Server Response.'),
-    };
   }
 }
 
@@ -87,114 +60,17 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
     // Run immediately on app start
     final String randomnumber = generateRandomString(7);
-    // fetchKey(randomnumber).then((Res res) {
-    //   pubKey = res.pubKey;
-    //   owner_id = res.ownerId;
-    //   jwt = res.jwt;
-    // });
 
     // Then run every 5 minutes
     // _fetchAndSchedule();
   }
 
   // VARIABLES
-  CameraController? _controller;
-  Uint8List? _webImage;
-  XFile? _capturedImage;
-  bool _showCamera = false;
-  int? _statusCode;
-
-  Future<Res>? _futureKey;
-  String? clientPublicKeyBase64;
-  SimpleKeyPair? clientKeyPair;
-
-  // req to server
-
-  // Take from Camera
-  Future<void> _openCamera() async {
-    try {
-      _controller = null;
-      _capturedImage = null;
-      _webImage = null;
-      _showCamera = true;
-      uploaded = false;
-
-      final List<CameraDescription> cameras = await availableCameras();
-      final CameraDescription backCamera = cameras.firstWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
-
-      _controller = CameraController(
-        backCamera,
-        ResolutionPreset.ultraHigh,
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
-      );
-      await _controller!.initialize();
-      if (!mounted) return;
-
-      setState(() {
-        _showCamera = true;
-      });
-    } on CameraException catch (e) {
-      debugPrint("Camera error: ${e.description}");
-    }
-  }
-
-  Future<void> _takePicture() async {
-    final dynamic image = await _controller!.takePicture();
-
-    if (image == null) return;
-    imageAsBytes = await image.readAsBytes();
-
-    if (kIsWeb) {
-      setState(() {
-        _webImage = imageAsBytes;
-        _showCamera = false;
-      });
-    } else {
-      setState(() {
-        _capturedImage = image;
-        _showCamera = false;
-      });
-    }
-  }
-
-  // Take From Gallery
-  Future _openGallery() async {
-    _controller = null;
-    _capturedImage = null;
-    _webImage = null;
-    uploaded = false;
-
-    final XFile? image = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: null,
-      requestFullMetadata: false,
-    );
-
-    if (image == null) return;
-
-    imageAsBytes = await image.readAsBytes();
-
-    if (kIsWeb) {
-      setState(() {
-        _webImage = imageAsBytes;
-        _showCamera = false;
-      });
-    } else {
-      setState(() {
-        _capturedImage = image;
-        _showCamera = false;
-      });
-    }
-  }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _controller!.dispose();
+    Variables.controller!.dispose();
     super.dispose();
   }
 
@@ -232,24 +108,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    FutureBuilder<Res>(
-                      future: _futureKey, // ✅ use stored Future
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const CircularProgressIndicator();
-                        } else if (snapshot.hasError) {
-                          return Text('Error: ${snapshot.error}');
-                        } else if (snapshot.hasData) {
-                          return Text('pubKey: ${snapshot.data!.pubKey}');
-                        }
-                        return const Text('No data');
-                      },
-                    ),
-
                     /// GALLERY BUTTON
                     ElevatedButton(
-                      onPressed: _openGallery,
+                      onPressed: () async {
+                        await openGallery();
+                        Variables.updateImage(
+                          await Variables.capturedImage!.readAsBytes(),
+                        );
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.red,
                       ),
@@ -266,7 +132,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
                     /// CAMERA BUTTON
                     ElevatedButton(
-                      onPressed: _openCamera,
+                      onPressed: () {},
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                       ),
@@ -279,15 +145,28 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
-                    if (_capturedImage != null || _webImage != null)
+                    if (Variables.capturedImage != null ||
+                        Variables.webImage != null)
                       ElevatedButton(
-                        onPressed: () {
-                          upload(imageAsBytes!);
+                        onPressed: () async {
+                          try {
+                            print('Hi');
+                            print(Variables.streamImage);
+                            final encryptedStream = encrypt(
+                              stream: Variables.streamImage!,
+                            );
+                            final response = await upload(
+                              byteStream: encryptedStream,
+                            );
+                            print(response.statusCode);
+                          } catch (e) {
+                            print(e);
+                          }
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.green,
                         ),
-                        child: uploaded == true
+                        child: Variables.uploaded == true
                             ? const Text(
                                 "Done!",
                                 style: TextStyle(
@@ -310,10 +189,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 const SizedBox(height: 10),
 
                 /// CAMERA PREVIEW
-                if (_showCamera && _controller != null)
+                if (Variables.showCamera && controller != null)
                   Stack(
                     children: [
-                      CameraPreview(_controller!),
+                      CameraPreview(Variables.controller!),
 
                       /// TAKE BUTTON
                       Positioned(
@@ -323,7 +202,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.blue,
                           ),
-                          onPressed: _takePicture,
+                          onPressed: () {},
                           child: const Text(
                             "Take",
                             style: TextStyle(
@@ -339,14 +218,27 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                 const SizedBox(height: 10),
 
                 /// CAPTURED IMAGE
-                if (_capturedImage != null)
-                  Image.file(File(_capturedImage!.path), fit: BoxFit.cover)
-                else if (kIsWeb && _webImage != null)
-                  Image.memory(_webImage!)
-                else if (_capturedImage == null &&
-                    _webImage == null &&
-                    _showCamera == false)
-                  const SizedBox(height: 200, child: Text('select the image')),
+                StreamBuilder<Uint8List?>(
+                  stream: Variables.imageStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasData && snapshot.data != null) {
+                      return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                    }
+
+                    if (Variables.showCamera) {
+                      return const SizedBox(
+                        height: 200,
+                        child: Center(child: Text('Camera preview')),
+                      );
+                    }
+
+                    return const SizedBox(
+                      height: 200,
+                      child: Center(child: Text('Select the image')),
+                    );
+                  },
+                ),
+                const SizedBox(height: 200, child: Text('select the image')),
               ],
             ),
           ),

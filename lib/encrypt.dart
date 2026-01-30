@@ -1,20 +1,31 @@
-import 'dart:convert';
-import 'package:cryptography/cryptography.dart';
-import 'dart:math';
-import 'dart:typed_data';
-import 'package:http/http.dart' as http;
 import 'dart:io';
+import 'dart:convert';
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+import 'package:cryptography/cryptography.dart';
+import 'package:flutter_application_1/encrypt.dart';
+import 'package:flutter_application_1/Picture.dart';
+import 'package:flutter_application_1/flags.dart';
+import 'dart:typed_data';
+import 'dart:math';
 
-Future<Map<String, dynamic>> encryptForServer({
-  required List<int> message,
-  required String serverPubKeyString,
-  required SimpleKeyPair clientKeyPair,
-}) async {
+List<int> m = [12, 13, 14, 15];
+final controller = StreamController<List<int>>();
+
+Stream<List<int>> encrypt({
+  required Stream<List<int>> stream,
+  String serverPubKeyString = '6INp7B55Fe3EGZEH9TZsIFGzrItNIODSl88uHaVvgSE=',
+}) async* {
   final aes = AesGcm.with256bits();
   final x25519 = X25519();
-  final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
 
   // 1️⃣ Generate client ephemeral key pair
+  final clientKeyPair = await x25519.newKeyPair();
   final clientPublicKey = await clientKeyPair.extractPublicKey();
 
   // 2️⃣ Decode server public key
@@ -30,20 +41,59 @@ Future<Map<String, dynamic>> encryptForServer({
     remotePublicKey: serverPublicKey,
   );
 
-  // 4️⃣ Derive AES key (NO salt unless server also uses it)
-  final aesKey = await hkdf.deriveKey(secretKey: sharedSecret);
+  // 4️⃣ Derive key for sign the Client AES
+  final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+  final random = Random.secure();
+  final hkdfNonce = <int>[];
+  for (int i = 0; i < 16; i++) {
+    hkdfNonce.add(random.nextInt(256));
+  }
+  final key = await hkdf.deriveKey(secretKey: sharedSecret, nonce: hkdfNonce);
 
   // 5️⃣ Encrypt
-  final nonce = aes.newNonce();
-  final secretBox = await aes.encrypt(message, secretKey: aesKey, nonce: nonce);
-
-  // 6️⃣ Return payload for server
-  return {
+  Mac? mac;
+  final aesNonce = aes.newNonce();
+  final secretBox = aes.encryptStream(
+    stream,
+    secretKey: key,
+    nonce: aesNonce,
+    onMac: (m) {
+      mac = m;
+    },
+  );
+  print({
     "client_pub": base64Encode(clientPublicKey.bytes),
-    "nonce": base64Encode(nonce),
-    "ciphertext": base64Encode(secretBox.cipherText),
-    "tag": base64Encode(secretBox.mac.bytes),
-  };
+    'shared-secret': base64Encode(await sharedSecret.extractBytes()),
+    "hkdfNonce": base64Encode(hkdfNonce),
+    "aes": base64Encode(key.bytes),
+    "aesNonce": base64Encode(aesNonce),
+    // "ciphertext": base64Encode(secretBox.cipherText),
+    "mac": base64Encode(mac!.bytes),
+  });
+  yield* secretBox;
+}
+
+/// Sends a stream of bytes to the server using StreamedRequest
+Future<http.StreamedResponse> upload({
+  required Stream<List<int>> byteStream,
+}) async {
+  final request = http.StreamedRequest(
+    'POST',
+    Uri.parse('http://localhost:5000/data'),
+  );
+  request.headers['title'] = 'Upload';
+
+  // Pipe the byteStream into the request's sink
+  await for (final chunk in byteStream) {
+    request.sink.add(chunk);
+  }
+
+  // Close the sink to finish sending
+  request.sink.close();
+
+  // Send the request and get the response
+  final response = await request.send();
+  return response;
 }
 
 String generateRandomString(int length) {
@@ -57,28 +107,4 @@ String generateRandomString(int length) {
       (_) => chars.codeUnitAt(random.nextInt(chars.length)),
     ),
   );
-}
-
-Future<void> upload(Uint8List value) async {
-  var request = http.MultipartRequest(
-    'POST',
-    Uri.parse('http://localhost:5000/data'),
-  );
-
-  request.fields['title'] = 'title';
-
-  request.files.add(
-    http.MultipartFile.fromBytes(
-      'img', // must match FastAPI parameter
-      value, // raw bytes
-      filename: 'data.bin',
-    ),
-  );
-
-  var response = await request.send();
-
-  final resBytes = await response.stream.toBytes();
-  final result = utf8.decode(resBytes);
-
-  print(result);
 }

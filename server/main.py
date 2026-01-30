@@ -26,7 +26,7 @@ for t in threads:
 app = _fastapi.FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:27432"],  # adjust to your client
+    allow_origins=["*"],  # adjust to your client
     allow_credentials=True,
     allow_methods=["*"],  # allow GET, POST, PUT, DELETE, OPTIONS
     allow_headers=["*"],
@@ -78,14 +78,14 @@ async def create_user(user: _schemas.PublicKeyRequest_Base, db: _orm.Session = _
 
 
 
-from fastapi import UploadFile, File, Form
-
 @app.post("/data")
-async def data_incoming(
-    title: str = Form(...),
-    img: UploadFile = File(...),
-):
-    data = await img.read()  # bytes
-    print(type(data))        # <class 'bytes'>
-    print(len(data))
-    return {"status": "ok"}
+async def receive_stream(request: _fastapi.Request):
+    """
+    Receive streamed bytes and save them to a file
+    """
+    # Open a file to write the incoming bytes
+    print(request.body)
+    async for chunk in request.stream():  # request.stream() yields bytes
+            print(chunk)
+
+    return {"status": "success", "message": "Data received"}
