@@ -49,6 +49,7 @@ class User(Base):
     owner_id = _sql.Column( _sql.String, index=True )
 
     jwt = _sql.Column(_sql.String, unique=True, index = True)
+    aesNonce = _sql.Column(_sql.String, unique=True, index = True)
     data_created = _sql.Column(_sql.Integer, default=int(_dt.datetime.now().timestamp()))
     exp = _sql.Column(_sql.Integer)
     image = _sql.Column(_sql.LargeBinary, nullable=True)

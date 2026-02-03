@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from secrets import choice   
 import random,string, threading, asyncio
 from concurrent.futures import ThreadPoolExecutor
-import base64
+import base64, uuid, pathlib
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
@@ -34,58 +34,54 @@ app.add_middleware(
 
 
 
-# @app.get("/")
-# async def create_user():
-
-
-#     return {'pubKey':" String pubKey", 'exp': 123456789, 'jwt': "String jwt"}
-
-
-
-
 @app.post("/key")
 async def create_user(user: _schemas.PublicKeyRequest_Base, db: _orm.Session = _fastapi.Depends(_services.create_get_db)):
     owner = user.owner_id
+    print(user)
     user_exist = await _services.get_user_by_owner_id(owner, db)
     if user_exist:
 
         return {'pub_key':"user_exist", 'exp': 111111, 'jwt': "user_exist user_exist"}
 
     row_object_x25519, row_object_ed25519 = _services.get_newest_KeyRows(db)
+    server_pv, server_pub, ed25519_pv = (row_object_x25519.pv_key, row_object_x25519.pub_key, row_object_ed25519.pv_key_Ed25519)
 
-    server_pub, ed25519_pv = (row_object_x25519.pub_key, row_object_ed25519.pv_key_Ed25519)
-    aes = _services.sharedSecret_AES(user.clientPublicKeyBase64, bytes(row_object_x25519.pv_key))
+    aes = _services.sharedSecret_AES(user.clientPublicKeyBase64, server_pv, user.hkdfNonce)
     
     expire = int(_dt.datetime.now().timestamp() + 360)
 
     new_owner_id = str(user.owner_id+"@"+''.join(choice(string.printable.replace('@', '')) for _ in range(7)))
-
-    loaded_public_key = x25519.X25519PublicKey.from_public_bytes(server_pub).public_bytes(encoding=serialization.Encoding.PEM, format=serialization.PublicFormat.SubjectPublicKeyInfo)
-
-    payload = {"owner_id": new_owner_id, "pub_key": loaded_public_key.decode().splitlines()[1], "exp":expire}
-
+    payload = {"owner_id": new_owner_id, "pub_key": base64.b64encode(server_pub).decode('utf-8'), "exp":expire}
     token = _services.generate_token_payload(payload, ed25519_pv)
 
-    key_response = {"owner_id": user.owner_id, "pub_key": loaded_public_key.decode().splitlines()[1], "jwt":token}
+    key_response = {"owner_id": user.owner_id, "pub_key": base64.b64encode(server_pub).decode('utf-8'), "jwt":token}
     Public_Key_Response = _schemas.PublicKeyResponse.model_validate(key_response)
 
-    db_user = User(owner_id=new_owner_id, jwt=token, ed25519_key_id = row_object_ed25519.id, x25519_key_id=row_object_x25519.id, exp=expire, clientPublicKeyBase64 = user.clientPublicKeyBase64, sharedSecret_AES=aes)
+    db_user = User(owner_id=new_owner_id, jwt=token, ed25519_key_id = row_object_ed25519.id, x25519_key_id=row_object_x25519.id, exp=expire, clientPublicKeyBase64 = user.clientPublicKeyBase64, sharedSecret_AES=aes, aesNonce=user.aesNonce)
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    print(Public_Key_Response.model_dump(mode='json'))
+    print(base64.b64encode(server_pv).decode('utf-8'))
+    print(base64.b64encode(aes).decode('utf-8'))
 
     return Public_Key_Response.model_dump(mode='json')
 
 
 
-@app.post("/data")
-async def receive_stream(request: _fastapi.Request):
-    """
-    Receive streamed bytes and save them to a file
-    """
-    # Open a file to write the incoming bytes
-    print(request.body)
-    async for chunk in request.stream():  # request.stream() yields bytes
-            print(chunk)
 
-    return {"status": "success", "message": "Data received"}
+@app.post("/data")
+async def upload_cipher(req: dict, db: _orm.Session = _fastapi.Depends(_services.create_get_db)):
+    # old_owner = req.owner_id
+    user_exist = await _services.get_user_by_owner_id(req['owner_id'], db)
+    if not user_exist:
+        raise _fastapi.HTTPException(status_code=404, detail="User not found")
+    
+    path = pathlib.Path('.') / 'images' / (str(uuid.uuid4()) + '.jpg')
+    with open(path, "wb") as f:
+        f.write(_services.decrypt_aes(user_exist.sharedSecret_AES, user_exist.aesNonce, req["ciphertext"], req["mac"]))
+    
+
+    print(base64.b64encode(user_exist.sharedSecret_AES).decode('utf-8'))
+    return {'ok':'ok'}
+

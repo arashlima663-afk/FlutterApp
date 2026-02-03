@@ -31,7 +31,7 @@ async def get_user_by_owner_id(owner_id: str , db: _orm.Session):
     query = _sql.select(_models.User).where( _sql.func.substr(_models.User.owner_id, 1, _sql.func.instr(_models.User.owner_id, "@") - 1 ) == owner_id)
     result = db.execute(query)
     if result:
-        return result.first()
+        return result.scalars().first()
     else:
         return False
 
@@ -47,7 +47,7 @@ def get_newest_KeyRows(db: _orm.Session):
 
 
 class key_generating:
-    __slots__ = ('pv_bytes', 'pub_bytes','private_key_Ed25519','public_key_Ed25519')
+    __slots__ = ('pv_bytes', 'pub_bytes','pv_str', 'pub_str','private_key_Ed25519','public_key_Ed25519')
 
     def __init__(self):
 
@@ -67,10 +67,10 @@ class key_generating:
     def key_pair_bytes(self) -> tuple[bytes, bytes]:
         return self.pv_bytes, self.pub_bytes
 
-    # def key_pair_str(self) -> tuple[str, str]:
-    #     self.pv_str=str(self.pv_bytes.decode().splitlines()[1])
-    #     self.pub_str = str(self.pub_bytes.decode().splitlines()[1])
-    #     return self.pv_str, self.pub_str
+    def key_pair_str(self) -> tuple[str, str]:
+        self.pv_str=str(self.pv_bytes.decode().splitlines()[1])
+        self.pub_str = str(self.pub_bytes.decode().splitlines()[1])
+        return self.pv_str, self.pub_str
    
 
     def generate_Ed25519(self):
@@ -91,46 +91,53 @@ class key_generating:
 
 
 
-def sharedSecret_AES(clientPublicKeyBase64: str, server_private_bytes: bytes):
+def sharedSecret_AES(clientPublicKeyBase64: str, server_private_bytes: bytes, nonce:str):
     # Load server private key from raw 32 bytes
     server_private_key = x25519.X25519PrivateKey.from_private_bytes(server_private_bytes)
 
     # Load client public key from Base64
-    client_pub_bytes = base64.b64decode(clientPublicKeyBase64)
+
+    client_pub_bytes = base64.b64decode(clientPublicKeyBase64.encode('utf-8'))
     client_public_key = x25519.X25519PublicKey.from_public_bytes(client_pub_bytes)
 
     # Compute shared secret
     shared_secret = server_private_key.exchange(client_public_key)
 
     # Derive AES key from shared secret
+    nonce = base64.b64decode(nonce)
+
     aes_key_bytes = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=None,
-        info=b"handshake shared_secret aes key",
+        salt=nonce,
+        info=None,
     ).derive(shared_secret)
-
+    aes_key_str= base64.b64encode(aes_key_bytes).decode('utf-8')
     return aes_key_bytes
 
 
 
-def decrypt_aes(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) -> bytes:
+def decrypt_aes(key: bytes, nonce: str, ciphertext, mac) -> bytes:
+    nonce = base64.b64decode(nonce)
+    ciphertext = bytes(ciphertext)
+    mac = bytes(mac)
     aesgcm = AESGCM(key)
-    data = aesgcm.decrypt(nonce, ciphertext, tag)
+    data = aesgcm.decrypt(nonce, ciphertext + mac, None)
 
     return data
 
 
 
 def generate_token_payload(payload: dict, private_key) -> str:
-
-    payload = jwt.encode(payload, private_key, algorithm="EdDSA")
-    return payload
+    secret_pv = private_key.decode()
+    token = jwt.encode(payload, secret_pv, algorithm="EdDSA")
+    return token
 
 
 def verify_token(jwt_token: str, public_key) -> dict:
     try:
-        payload = jwt.decode(jwt_token, public_key, algorithms=["EdDSA"])
+        secret_pub = public_key.decode()
+        payload = jwt.decode(jwt_token, secret_pub, algorithms=["EdDSA"])
         return payload
     except jwt.exceptions.ExpiredSignatureError:
         print("Token expired")
@@ -138,15 +145,14 @@ def verify_token(jwt_token: str, public_key) -> dict:
 
 
 
-def generating_ed_keys():
-
+def generating_x_keys():
     while True:
-        db: _orm.Session = _models.SessionLocal()
+        
         try:
+            db: _orm.Session = _models.SessionLocal()
             a = key_generating()
             server_pv, server_pub = a.key_pair_bytes()
             new_keys = _models.X25519_Key(pv_key=server_pv, pub_key=server_pub)
-
             db.add(new_keys)
             db.commit()
             db.refresh(new_keys)
@@ -154,18 +160,17 @@ def generating_ed_keys():
         except Exception as e:
             db.rollback()
             print("Key generation error:", e)
-
         finally:
             db.close()
 
         time.sleep(random.randint(30*60,40*60))
 
 
-def generating_x_keys():
-
+def generating_ed_keys():
     while True:
-        db: _orm.Session = _models.SessionLocal()
+        
         try:
+            db: _orm.Session = _models.SessionLocal()
             b = key_generating()
             ed25519_pv, ed25519_pub = b.generate_Ed25519()
             new_keys = _models.Ed25519_Key(pv_key_Ed25519=ed25519_pv, pub_key_Ed25519=ed25519_pub)
